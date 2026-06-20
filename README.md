@@ -6,6 +6,15 @@
 
 Tiny Shakespeare나 저작권이 있는 소설은 사용하지 않았다. 데이터는 `data/korean_finance_corpus.txt`에 직접 작성한 한국어 문장으로 구성했으며, 주제는 인공지능, 금융, 시장, 교육, 책임 있는 기술이다.
 
+## 노트북
+
+- [Notebook 01 Bigram](notebooks/01_bigram.ipynb)
+- [Notebook 02 Embedding + MLP](notebooks/02_mlp_embedding.ipynb)
+- [Notebook 03 Korean Corpus MLP](notebooks/03_korean_corpus_mlp.ipynb)
+- [Notebook 04 Sequence LM](notebooks/04_sequence_lm.ipynb)
+- [Notebook 05 Masked Attention](notebooks/05_masked_attention.ipynb)
+- [Notebook 06 Tiny GPT Korean](notebooks/06_tiny_gpt_korean.ipynb)
+
 ## 학습 진행 흐름
 
 1. Bigram Language Model: 현재 문자 하나만 보고 다음 문자를 예측한다.
@@ -13,6 +22,17 @@ Tiny Shakespeare나 저작권이 있는 소설은 사용하지 않았다. 데이
 3. GPT-style sequence dataset: `block_size` 길이의 입력 `x`와 한 칸 이동한 목표 `y`를 만든다.
 4. Single-head causal masked self-attention: 한 어텐션 헤드가 과거 위치만 보도록 causal mask를 적용한다.
 5. Multi-head Tiny GPT: 여러 어텐션 헤드, 피드포워드 네트워크, 잔차 연결, LayerNorm, dropout, Transformer block을 쌓아 최종 모델을 만든다.
+
+## 단계 비교
+
+| stage | context size | model | attention | output shape | key limitation |
+|---|---:|---|---|---|---|
+| 01 Bigram | 1 | embedding table | 없음 | `(B, V)` | 직전 문자 하나만 사용 |
+| 02 MLP | 3 | token embedding + flatten + MLP | 없음 | `(B, V)` | 고정 길이 문맥만 사용 |
+| 03 Corpus MLP | 3 | 한국어 말뭉치 MLP | 없음 | `(B, V)` | 긴 도메인 문맥을 잃음 |
+| 04 Sequence LM | `T` | token + positional embedding + FFN | 없음 | `(B, T, V)` | 위치 간 정보 교환 없음 |
+| 05 Masked Attention | `T` | single-head masked self-attention | causal | `(B, T, H)` | 단일 head와 블록 부재 |
+| 06 Tiny GPT | 64 | stacked Transformer blocks | multi-head causal | `(B, T, V)` | 작은 말뭉치로 과적합 |
 
 ## 모델 구조
 
@@ -69,6 +89,11 @@ flowchart TD
 
 학습 로그는 `outputs/training_history.csv`에 저장된다. 손실 곡선은 아래 파일로 저장된다.
 
+- initial train/val loss: `6.0947 / 6.0954`
+- final train/val loss: `1.1248 / 3.8742`
+
+train loss는 크게 내려갔지만 validation loss는 중간 이후 다시 높아졌다. 이는 말뭉치가 작아서 모델이 학습 문장을 빠르게 외우는 과적합 신호로 보는 것이 정직하다.
+
 ![loss curve](outputs/loss_curve.png)
 
 생성 샘플은 `outputs/generated_samples.txt`에 저장된다. 짧은 학습이므로 문장이 완벽하지는 않지만, 한국어 문자 패턴과 프로젝트 말뭉치의 주제 표현을 학습하는 흐름을 확인할 수 있다.
@@ -101,7 +126,13 @@ README.md
 requirements.txt
 data/korean_finance_corpus.txt
 notebooks/06_tiny_gpt_korean.ipynb
+notebooks/01_bigram.ipynb
+notebooks/02_mlp_embedding.ipynb
+notebooks/03_korean_corpus_mlp.ipynb
+notebooks/04_sequence_lm.ipynb
+notebooks/05_masked_attention.ipynb
 src/__init__.py
+src/baselines.py
 src/tokenizer.py
 src/dataset.py
 src/model.py
@@ -114,4 +145,5 @@ outputs/model_config.json
 tests/test_tokenizer.py
 tests/test_model.py
 tests/test_dataset.py
+tests/test_baselines.py
 ```
