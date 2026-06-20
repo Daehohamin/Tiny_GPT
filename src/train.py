@@ -42,11 +42,26 @@ def save_loss_curve(history: list[dict[str, float]], path: Path) -> None:
     train_losses = [row["train_loss"] for row in history]
     val_losses = [row["val_loss"] for row in history]
     plt.figure(figsize=(7, 4))
-    plt.plot(steps, train_losses, label="train")
-    plt.plot(steps, val_losses, label="val")
+    plt.plot(
+        steps,
+        train_losses,
+        color="#2563EB",
+        marker="o",
+        linewidth=2.4,
+        label="Train Loss",
+    )
+    plt.plot(
+        steps,
+        val_losses,
+        color="#EA580C",
+        marker="s",
+        linewidth=2.4,
+        label="Validation Loss",
+    )
     plt.xlabel("iteration")
     plt.ylabel("cross entropy loss")
     plt.title("Tiny Korean GPT loss")
+    plt.grid(alpha=0.25)
     plt.legend()
     plt.tight_layout()
     plt.savefig(path, dpi=150)
