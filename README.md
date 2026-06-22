@@ -13,7 +13,7 @@
 7. [실제 학습 결과](#실제-학습-결과)
 8. [생성 샘플](#생성-샘플)
 9. [학습 결과 분석](#학습-결과-분석)
-10. [테스트와 재현 명령어](#테스트와-재현-명령어)
+10. [실시간 재현 및 실행 절차](#실시간-재현-및-실행-절차)
 11. [파일 구조](#파일-구조)
 
 ## 저장소 개요
@@ -152,25 +152,184 @@ flowchart TD
 
 본 프로젝트의 목표는 한국어 문자 단위 데이터에서 TinyGPT 구조를 직접 구현하고, 실제 학습과 문장 생성 과정을 검증하는 것이었습니다. 손실 감소, 손실 곡선, 생성 결과를 통해 해당 목표를 확인했습니다. 더 큰 말뭉치, early stopping, 정규화 강화, subword tokenization은 후속 확장 실험에서 적용할 수 있습니다.
 
-## 테스트와 재현 명령어
+## 실시간 재현 및 실행 절차
 
-이미 의존성이 설치된 환경에서는 다음 명령어로 검증할 수 있습니다.
+이 절차는 짧은 실시간 학습으로 training pipeline을 확인한 뒤,
+제출된 최종 checkpoint로 한국어 문장을 생성하는 과정으로 구성됩니다.
+
+실시간 학습 결과는 `/tmp`에 저장하므로 저장소의
+`outputs/`와 제출된 checkpoint를 변경하지 않습니다.
+
+### 1. 저장소 상태 확인
+
+```bash
+cd /workspaces/Tiny_GPT
+
+git switch main
+git pull --ff-only origin main
+git status --short
+```
+
+`git status --short`에 출력이 없으면 로컬 저장소와 원격 `main`이
+동기화되고 작업 트리가 깨끗한 상태입니다.
+
+학습 데이터의 일부는 다음 명령으로 확인할 수 있습니다.
+
+```bash
+sed -n '1,15p' data/korean_finance_corpus.txt
+```
+
+이 프로젝트는 Tiny Shakespeare 대신 직접 작성한
+한국어 금융·인공지능 말뭉치를 사용합니다.
+
+### 2. 코드 및 단위 테스트 검증
 
 ```bash
 python -m compileall src
 python -m unittest discover -s tests -v
-python -m src.generate
 ```
 
-처음 환경을 구성하는 경우에는 아래 명령어로 의존성을 설치한 뒤 실행합니다.
+검증 항목은 다음과 같습니다.
+
+- 문자 tokenizer의 encode/decode
+- `stoi`, `itos`, vocabulary
+- `x/y` 한 칸 shifting
+- Bigram, MLP, sequence model
+- causal mask의 미래 token 차단
+- TinyGPT logits shape `(B, T, V)`
+- autoregressive generation output shape
+
+단위 테스트는 학습 checkpoint나 제출 결과물을 변경하지 않습니다.
+
+### 3. 20회 실시간 학습 재현
 
 ```bash
-python -m pip install -r requirements.txt
-python -m src.train --quick
-python -m src.generate
+rm -rf /tmp/tinygpt_demo_train
+
+python -m src.train \
+  --quick \
+  --max-iters 20 \
+  --eval-interval 10 \
+  --sample-tokens 10 \
+  --output-dir /tmp/tinygpt_demo_train
 ```
 
-노트북 실행 검증은 한국어 단계별 재구현 노트북과 한국어 TinyGPT 최종 노트북에 대해 수행합니다. 강의 원본 노트북은 JSON 유효성만 확인하고 수정하지 않습니다.
+이 명령은 다음 과정을 실제로 수행합니다.
+
+1. 한국어 말뭉치를 문자 단위 token ID로 변환
+2. 데이터를 train/validation으로 분리
+3. `block_size + 1` 길이의 구간에서 `x/y` shifted sequence 생성
+4. token embedding과 position embedding 결합
+5. causal multi-head self-attention과 Transformer block 통과
+6. logits `(B, T, V)` 생성
+7. sequence cross entropy 계산
+8. backward propagation과 AdamW parameter update
+9. 학습 기록, 손실 곡선, model config와 checkpoint 저장
+
+실시간 학습 결과는 다음 명령으로 확인합니다.
+
+```bash
+cat /tmp/tinygpt_demo_train/training_history.csv
+ls -lh /tmp/tinygpt_demo_train
+```
+
+`iter 0`, `iter 10`, `iter 20`의 train loss와 validation loss가
+감소하면 학습 pipeline이 정상 작동한 것입니다.
+
+20회 학습은 전체 pipeline을 짧게 재현하기 위한 실행이며,
+최종 생성 품질을 평가하기 위한 학습은 아닙니다.
+공식 학습 결과는 저장소의 120회 최종 checkpoint와
+`outputs/training_history.csv`를 기준으로 합니다.
+
+### 4. 최종 checkpoint로 한국어 300자 생성
+
+```bash
+python -m src.generate \
+  --checkpoint outputs/tiny_gpt.pt \
+  --output /tmp/tinygpt_demo_300.txt \
+  --prompt "인공지능은 금융 시장을 이해하는 새로운 도구가 될 수 있다." \
+  --max-new-tokens 300 \
+  --temperature 0.60 \
+  --top-k 10 \
+  --cpu
+```
+
+생성 결과를 다시 확인합니다.
+
+```bash
+cat /tmp/tinygpt_demo_300.txt
+wc -m /tmp/tinygpt_demo_300.txt
+```
+
+이 명령은 기존에 학습된 최종 checkpoint를 불러온 뒤 다음 순서로 실행됩니다.
+
+1. prompt를 문자 단위 token ID로 변환
+2. 최대 `block_size=64`개의 최근 context를 모델에 입력
+3. 마지막 위치의 logits `(B, V)` 선택
+4. logits를 temperature로 조정
+5. 확률이 높은 top-k 후보만 유지
+6. softmax 확률에서 다음 문자 sampling
+7. 생성된 문자를 context 뒤에 추가
+8. 위 과정을 300회 반복
+
+### 5. 실행 옵션 설명
+
+#### 학습 옵션
+
+| 옵션 | 의미 |
+|---|---|
+| `--quick` | Codespaces CPU에서 실행할 수 있는 짧은 학습 모드 |
+| `--max-iters 20` | optimizer update를 20회 수행 |
+| `--eval-interval 10` | 0, 10, 20 iteration에서 train/validation loss 평가 |
+| `--sample-tokens 10` | 짧은 확인용 sample 생성 |
+| `--output-dir /tmp/tinygpt_demo_train` | 제출 결과를 덮어쓰지 않고 임시 경로에 저장 |
+
+#### 생성 옵션
+
+| 옵션 | 의미 |
+|---|---|
+| `--checkpoint outputs/tiny_gpt.pt` | 제출된 120회 최종 학습 가중치 사용 |
+| `--prompt` | 생성을 시작할 한국어 context |
+| `--max-new-tokens 300` | prompt 뒤에 새로운 문자 300개 생성 |
+| `--temperature 0.60` | sampling의 무작위성을 줄여 높은 확률 token을 더 선호 |
+| `--top-k 10` | 확률이 높은 10개 문자 후보만 사용 |
+| `--cpu` | CPU에서 추론 실행 |
+| `--output` | 생성 결과를 저장할 경로 |
+
+### 6. 코드 모듈별 역할
+
+| 파일 | 역할 |
+|---|---|
+| `src/tokenizer.py` | 말뭉치의 고유 문자로 vocabulary, `stoi`, `itos` 구성 |
+| `src/dataset.py` | token sequence 분리와 `x/y` shifting dataset 생성 |
+| `src/baselines.py` | Bigram, MLP, sequence model, masked attention 단계 구현 |
+| `src/model.py` | TinyGPT, multi-head attention, FFN, residual, LayerNorm 구현 |
+| `src/train.py` | train/validation 분리, loss 계산, AdamW 학습, checkpoint 저장 |
+| `src/generate.py` | checkpoint 로드, prompt encoding, temperature/top-k 생성 |
+
+### 7. 결과 해석
+
+20회 실시간 학습에서는 학습 반복 횟수가 적기 때문에
+생성 문장의 품질이 낮을 수 있습니다.
+따라서 실시간 학습에서는 loss 감소와 checkpoint 생성 여부를 확인합니다.
+
+실제 문장 생성은 제출된 120회 최종 checkpoint로 수행합니다.
+동일한 checkpoint라도 확률 sampling을 사용하므로 실행할 때마다
+생성 결과가 달라질 수 있습니다.
+
+`temperature=0.60`과 `top-k=10`은 무작위성을 줄이지만,
+문법적 완전성을 보장하지는 않습니다.
+작은 문자 단위 말뭉치의 특성상 단어 의미보다 문자 전이와
+지역적인 문맥 패턴을 주로 학습합니다.
+
+### 8. 저장소 변경 여부 확인
+
+```bash
+git status --short
+```
+
+모든 실시간 결과를 `/tmp`에 저장했으므로
+정상적으로 실행했다면 작업 트리에 변경 사항이 없어야 합니다.
 
 ## 파일 구조
 
